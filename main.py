@@ -309,7 +309,6 @@ DOCS_HTML = """<!doctype html>
 def openapi():
     return jsonify(OPENAPI)
 
-#для коммита
 @app.get("/docs")
 def docs():
     return Response(DOCS_HTML, mimetype="text/html")
