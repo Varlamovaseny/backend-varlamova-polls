@@ -1,10 +1,17 @@
 {
   "base_url": "http://localhost:8000",
-  "resource": "items",
+  "resource": "polls",
   "id_field": "id",
   "missing_id": "999999",
   "list_key": null,
-  "create": { "title": "Первая запись" },
-  "update": { "title": "Изменённая запись" },
-  "required_field": "title"
+  "create": { "title": "Любимое время года", "description": "Выберите один вариант", "options": ["Зима", "Лето"], "status": "open" },
+  "update": { "status": "closed" },
+  "required_field": "title",
+  "errors": [
+  { "body": { "title": "" }, "field": "title" },
+  { "body": { "description": 123 }, "field": "description" },
+  { "body": { "options": ["Один"] }, "field": "options" },
+  { "body": { "status": "maybe" }, "field": "status" }
+  ],
+  "filter": { "param": "status", "value": "open", "other": "closed" }
 }
