@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,3 +29,14 @@ def init_db():
     conn = connect()
     conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
     conn.close()
+
+
+@contextmanager
+def transaction(conn):
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise

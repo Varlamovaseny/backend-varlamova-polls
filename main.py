@@ -6,13 +6,13 @@ import time
 from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from db import connect, init_db
+from db import connect, init_db, transaction
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 app.json.sort_keys = False
 
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)   # свой лог ниже
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("polls")
 
@@ -40,6 +40,17 @@ def error(text, field=None, code=400):
     if field is not None:
         body["field"] = field
     return jsonify(body), code
+
+
+class ApiError(Exception):
+
+    def __init__(self, response):
+        self.response = response
+
+
+@app.errorhandler(ApiError)
+def on_api_error(exc):
+    return exc.response
 
 
 @app.errorhandler(HTTPException)
@@ -286,19 +297,23 @@ def delete_poll(poll_id):
 
 @app.post("/api/polls/<int:poll_id>/votes")
 def create_vote(poll_id):
-    row = find_poll(poll_id)
-    if row is None:
-        return error("опрос не найден", code=404)
     data, err = read_body()
     if err:
         return err
-    clean, err = validate_vote(data, json.loads(row["options"]))
-    if err:
-        return err
-    cur = get_db().execute(
-        "INSERT INTO votes (poll_id, option, email) VALUES (?, ?, ?)",
-        (poll_id, clean["option"], clean["email"]),
-    )
+    db = get_db()
+    with transaction(db):
+        row = db.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)).fetchone()
+        if row is None:
+            raise ApiError(error("опрос не найден", code=404))
+        clean, err = validate_vote(data, json.loads(row["options"]))
+        if err:
+            raise ApiError(err)
+        if row["status"] == "closed":
+            raise ApiError(error("опрос закрыт, голосовать нельзя", code=409))
+        cur = db.execute(
+            "INSERT INTO votes (poll_id, option, email) VALUES (?, ?, ?)",
+            (poll_id, clean["option"], clean["email"]),
+        )
     return jsonify({"id": cur.lastrowid, "poll_id": poll_id, **clean}), 201
 
 
@@ -321,13 +336,50 @@ def list_votes(poll_id):
     response.headers["X-Total-Count"] = str(total)
     return response
 
+@app.get("/api/polls/stats")
+def stats():
+    db = get_db()
+    by_status = {s: 0 for s in STATUSES}
+    for r in db.execute("SELECT status, COUNT(*) AS n FROM polls GROUP BY status"):
+        by_status[r["status"]] = r["n"]
+
+    totals = db.execute(
+        """
+        SELECT COUNT(*)                    AS polls,
+               COALESCE(SUM(cnt), 0)       AS votes,
+               COALESCE(ROUND(AVG(cnt), 2), 0) AS avg_votes
+        FROM (SELECT COUNT(v.id) AS cnt
+              FROM polls p LEFT JOIN votes v ON v.poll_id = p.id
+              GROUP BY p.id)
+        """
+    ).fetchone()
+
+    top = db.execute(
+        """
+        SELECT p.id, p.title, COUNT(v.id) AS votes
+        FROM polls p LEFT JOIN votes v ON v.poll_id = p.id
+        GROUP BY p.id
+        ORDER BY votes DESC, p.id
+        LIMIT 5
+        """
+    ).fetchall()
+
+    return jsonify({
+        "polls_total": totals["polls"],
+        "by_status": by_status,
+        "votes_total": totals["votes"],
+        "avg_votes_per_poll": totals["avg_votes"],
+        "top_polls": [{"poll_id": r["id"], "title": r["title"], "votes": r["votes"]} for r in top],
+    })
+
 
 def _ref(name):
     return {"$ref": f"#/components/schemas/{name}"}
 
 
 def _responses(*codes):
-    names = {200: "OK", 201: "Создано", 204: "Удалено", 400: "Ошибка валидации", 404: "Не найдено"}
+    names = {200: "OK", 201: "Создано", 204: "Удалено", 400: "Ошибка валидации", 404: "Не найдено",
+             409: "Конфликт: опрос закрыт"}
     out = {}
     for c in codes:
         out[str(c)] = {"description": names[c]}
@@ -348,7 +400,7 @@ PAGING = [
 
 OPENAPI = {
     "openapi": "3.0.3",
-    "info": {"title": "Polls API", "version": "2.0", "description": "Опросы и голоса, данные хранятся в SQLite"},
+    "info": {"title": "Polls API", "version": "2.1", "description": "Опросы и голоса, данные хранятся в SQLite"},
     "paths": {
         "/health": {"get": {"summary": "Проверка сервиса", "responses": _responses(200)}},
         "/api/polls": {
@@ -368,6 +420,7 @@ OPENAPI = {
                     "schema": _ref("Poll")}}}, **_responses(400)},
             },
         },
+        "/api/polls/stats": {"get": {"summary": "Статистика по опросам и голосам", "responses": _responses(200)}},
         "/api/polls/{poll_id}": {
             "get": {"summary": "Получить опрос", "parameters": [ID_PARAM], "responses": _responses(200, 404)},
             "put": {"summary": "Заменить опрос", "parameters": [ID_PARAM],
@@ -382,7 +435,7 @@ OPENAPI = {
                         "schema": {"type": "array", "items": _ref("Vote")}}}}, **_responses(400, 404)}},
             "post": {"summary": "Проголосовать", "parameters": [ID_PARAM], "requestBody": _body("VoteIn"),
                      "responses": {"201": {"description": "Создано", "content": {"application/json": {
-                         "schema": _ref("Vote")}}}, **_responses(400, 404)}},
+                         "schema": _ref("Vote")}}}, **_responses(400, 404, 409)}},
         },
     },
     "components": {"schemas": {

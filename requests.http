@@ -62,6 +62,19 @@ Content-Type: application/json
 
 { "title": "'); DROP TABLE polls;--", "options": ["Да", "Нет"] }
 
+GET {{base}}/api/polls/stats
+
+PATCH {{base}}/api/polls/1
+Content-Type: application/json
+
+{ "status": "closed" }
+
+###
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "petr@example.com" }
+
 DELETE {{base}}/api/polls/1
 
 POST {{base}}/api/polls
