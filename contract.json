@@ -1,5 +1,5 @@
 {
-  "base_url": "http://localhost:8000",
+  "base_url": "http://127.0.0.1:8000",
   "resource": "polls",
   "id_field": "id",
   "missing_id": "999999",
