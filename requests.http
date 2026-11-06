@@ -1,44 +1,93 @@
-# Запросы для демонстрации. В VS Code нужно расширение REST Client, в JetBrains IDE всё встроено.
-# Над каждым запросом появляется ссылка «Send Request».
-# items заменить на свой ресурс, тела на поля своей сущности.
+
 
 @base = http://localhost:8000
 
-### Сервис жив?
 GET {{base}}/health
 
-### Создать
-POST {{base}}/api/items
+POST {{base}}/api/polls
 Content-Type: application/json
 
-{ "title": "Первая запись" }
+{
+  "title": "Любимое время года",
+  "description": "Выберите один вариант",
+  "options": ["Зима", "Весна", "Лето", "Осень"],
+  "status": "open"
+}
 
-### Список
-GET {{base}}/api/items
+GET {{base}}/api/polls
 
-### Получить одну запись
-GET {{base}}/api/items/1
+GET {{base}}/api/polls?status=open&limit=10&offset=0
 
-### Изменить
-PATCH {{base}}/api/items/1
+GET {{base}}/api/polls?q=время
+
+GET {{base}}/api/polls?q=о&status=open&limit=5&offset=0
+
+GET {{base}}/api/polls/1
+
+GET {{base}}/api/polls/999999
+
+PUT {{base}}/api/polls/1
 Content-Type: application/json
 
-{ "title": "Изменённая запись" }
+{
+  "title": "Любимое время года (v2)",
+  "options": ["Зима", "Лето"],
+  "status": "open"
+}
 
-### Удалить
-DELETE {{base}}/api/items/1
-
-### После удаления должен быть 404
-GET {{base}}/api/items/1
-
-### Сломанный JSON, должен быть 400
-POST {{base}}/api/items
+PATCH {{base}}/api/polls/1
 Content-Type: application/json
 
-{ "title":
+{ "status": "closed" }
 
-### Пустое обязательное поле, должен быть 400
-POST {{base}}/api/items
+POST {{base}}/api/polls/1/votes
 Content-Type: application/json
 
-{ "title": "" }
+{ "option": "Зима", "email": "ivan@example.com" }
+
+GET {{base}}/api/polls/1/votes
+
+POST {{base}}/api/polls/999999/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "ivan@example.com" }
+
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Космос", "email": "ivan@example.com" }
+
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "не-почта" }
+
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "'); DROP TABLE polls;--", "options": ["Да", "Нет"] }
+
+GET {{base}}/api/polls/stats
+
+PATCH {{base}}/api/polls/1
+Content-Type: application/json
+
+{ "status": "closed" }
+
+###
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "petr@example.com" }
+
+DELETE {{base}}/api/polls/1
+
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "", "options": ["a", "b"] }
+
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "Опрос", "options": [
