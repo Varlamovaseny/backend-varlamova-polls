@@ -7,7 +7,10 @@
   "create": {
     "title": "Любимое время года",
     "description": "Выберите один вариант",
-    "options": ["Зима", "Лето"],
+    "options": [
+      "Зима",
+      "Лето"
+    ],
     "status": "open"
   },
   "update": {
@@ -80,5 +83,9 @@
     },
     "expect_status": 409
   },
-  "stats_path": "/api/polls/stats"
+  "stats_path": "/api/polls/stats",
+  "search": {
+    "param": "q",
+    "field": "title"
+  }
 }

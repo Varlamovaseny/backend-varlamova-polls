@@ -6,21 +6,20 @@ import time
 from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
-from db import connect, init_db, transaction
+from db import connect, ensure_schema, transaction
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
 app.json.sort_keys = False
 
-logging.getLogger("werkzeug").setLevel(logging.WARNING)   # свой лог ниже
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("polls")
 
 STATUSES = ("open", "closed")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-init_db()
-
+ensure_schema()
 
 def get_db():
     if "db" not in g:
@@ -33,7 +32,6 @@ def close_db(exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
-
 
 def error(text, field=None, code=400):
     body = {"error": text}
@@ -75,7 +73,6 @@ def log_request(response):
     ms = (time.perf_counter() - g.started) * 1000
     log.info("%s %s %s %.1fms", request.method, request.path, response.status_code, ms)
     return response
-
 
 def read_body():
     data = request.get_json(silent=True, force=True)
@@ -162,7 +159,6 @@ def int_param(name, default, minimum, maximum=None):
         return None, error("значение вне допустимого диапазона", name)
     return value, None
 
-
 def poll_to_dict(row):
     return {
         "id": row["id"],
@@ -192,7 +188,6 @@ def save_poll(poll_id, poll):
         (poll["title"], poll["description"], json.dumps(poll["options"], ensure_ascii=False),
          poll["status"], poll_id),
     )
-
 
 @app.get("/health")
 def health():
@@ -235,6 +230,11 @@ def list_polls():
     if title is not None:
         where.append("title = ?")
         params.append(title)
+    q = request.args.get("q", "").strip()
+    if q:
+        escaped = q.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("py_lower(title) LIKE ? ESCAPE '\\'")
+        params.append(f"%{escaped}%")
     clause = (" WHERE " + " AND ".join(where)) if where else ""
 
     db = get_db()
@@ -336,6 +336,7 @@ def list_votes(poll_id):
     response.headers["X-Total-Count"] = str(total)
     return response
 
+
 @app.get("/api/polls/stats")
 def stats():
     db = get_db()
@@ -372,7 +373,6 @@ def stats():
         "top_polls": [{"poll_id": r["id"], "title": r["title"], "votes": r["votes"]} for r in top],
     })
 
-
 def _ref(name):
     return {"$ref": f"#/components/schemas/{name}"}
 
@@ -400,7 +400,7 @@ PAGING = [
 
 OPENAPI = {
     "openapi": "3.0.3",
-    "info": {"title": "Polls API", "version": "2.1", "description": "Опросы и голоса, данные хранятся в SQLite"},
+    "info": {"title": "Polls API", "version": "2.2", "description": "Опросы и голоса, данные хранятся в SQLite"},
     "paths": {
         "/health": {"get": {"summary": "Проверка сервиса", "responses": _responses(200)}},
         "/api/polls": {
@@ -409,6 +409,8 @@ OPENAPI = {
                 "parameters": PAGING + [
                     {"name": "status", "in": "query", "schema": {"type": "string", "enum": list(STATUSES)}},
                     {"name": "title", "in": "query", "schema": {"type": "string"}},
+                    {"name": "q", "in": "query", "description": "поиск по части названия без учёта регистра",
+                     "schema": {"type": "string"}},
                 ],
                 "responses": {"200": {"description": "OK", "content": {"application/json": {
                     "schema": {"type": "array", "items": _ref("Poll")}}}}, **_responses(400)},

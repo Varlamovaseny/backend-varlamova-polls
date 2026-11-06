@@ -1,4 +1,5 @@
 
+
 @base = http://localhost:8000
 
 GET {{base}}/health
@@ -16,6 +17,10 @@ Content-Type: application/json
 GET {{base}}/api/polls
 
 GET {{base}}/api/polls?status=open&limit=10&offset=0
+
+GET {{base}}/api/polls?q=время
+
+GET {{base}}/api/polls?q=о&status=open&limit=5&offset=0
 
 GET {{base}}/api/polls/1
 
