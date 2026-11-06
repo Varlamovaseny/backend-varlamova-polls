@@ -7,18 +7,15 @@ HTTP-сервис для создания опросов и голосовани
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate        
 pip install -r requirements.txt
-cp .env.example .env             # Windows: copy .env.example .env
-alembic upgrade head             # создать таблицы и индекс (миграции)
-python seed.py                   # по желанию: тестовые данные в пустую базу
+cp .env.example .env            
+alembic upgrade head           
+python seed.py                 
 python main.py
 ```
 
-На Windows без активации окружения: `.\.venv\Scripts\python.exe -m alembic upgrade head`, `.\.venv\Scripts\python.exe seed.py`, `.\.venv\Scripts\python.exe main.py`.
-
 Сервис работает на http://localhost:8000, документация Swagger UI: http://localhost:8000/docs.
-Примеры запросов в `requests.http`. Если запустить сервис до миграций, он сообщит, что таблиц нет, и подскажет команду.
 
 ## Настройки
 
