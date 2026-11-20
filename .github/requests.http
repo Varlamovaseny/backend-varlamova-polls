@@ -1,0 +1,144 @@
+@base = http://localhost:8000
+
+### Проверка работоспособности
+GET {{base}}/health
+
+### Создать опрос (нужен вход)
+POST {{base}}/api/polls
+Content-Type: application/json
+Authorization: Basic demo demo-pass-123
+
+{
+  "title": "Любимое время года",
+  "description": "Выберите один вариант",
+  "options": ["Зима", "Весна", "Лето", "Осень"],
+  "status": "open"
+}
+
+### Регистрация (201; повтор того же логина даст 409)
+POST {{base}}/auth/register
+Content-Type: application/json
+
+{ "username": "anna", "password": "secret-pass" }
+
+### Кто я (нужен вход)
+GET {{base}}/auth/me
+Authorization: Basic anna secret-pass
+
+### Без входа (401)
+GET {{base}}/auth/me
+
+### Неверный пароль (401)
+GET {{base}}/auth/me
+Authorization: Basic anna wrong-pass
+
+### Создать опрос без входа (401)
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "Без входа", "options": ["a", "b"] }
+
+### Чужая запись: anna пытается удалить опрос demo (403)
+DELETE {{base}}/api/polls/1
+Authorization: Basic anna secret-pass
+
+### Список опросов
+GET {{base}}/api/polls
+
+### Список: фильтр и пагинация
+GET {{base}}/api/polls?status=open&limit=10&offset=0
+
+### Поиск по названию без учёта регистра
+GET {{base}}/api/polls?q=время
+
+### Поиск вместе с фильтром и пагинацией
+GET {{base}}/api/polls?q=о&status=open&limit=5&offset=0
+
+### Один опрос
+GET {{base}}/api/polls/1
+
+### Неизвестный id (404)
+GET {{base}}/api/polls/999999
+
+### Полная замена (PUT, только автор)
+PUT {{base}}/api/polls/1
+Content-Type: application/json
+Authorization: Basic demo demo-pass-123
+
+{
+  "title": "Любимое время года (v2)",
+  "options": ["Зима", "Лето"],
+  "status": "open"
+}
+
+### Частичное изменение (PATCH): закрыть опрос (только автор)
+PATCH {{base}}/api/polls/1
+Content-Type: application/json
+Authorization: Basic demo demo-pass-123
+
+{ "status": "closed" }
+
+### Проголосовать
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "ivan@example.com" }
+
+### Голоса опроса
+GET {{base}}/api/polls/1/votes
+
+### Голос в несуществующем опросе (404)
+POST {{base}}/api/polls/999999/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "ivan@example.com" }
+
+### Ошибка: варианта нет в опросе (400)
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Космос", "email": "ivan@example.com" }
+
+### Ошибка: плохой email (400)
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "не-почта" }
+
+### SQL-инъекция сохраняется как обычный текст
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "'); DROP TABLE polls;--", "options": ["Да", "Нет"] }
+
+### Статистика (агрегаты считает база)
+GET {{base}}/api/polls/stats
+
+### Закрыть опрос, потом попробовать проголосовать (409)
+PATCH {{base}}/api/polls/1
+Content-Type: application/json
+Authorization: Basic demo demo-pass-123
+
+{ "status": "closed" }
+
+###
+POST {{base}}/api/polls/1/votes
+Content-Type: application/json
+
+{ "option": "Зима", "email": "petr@example.com" }
+
+### Удалить опрос вместе с голосами (204, только автор)
+DELETE {{base}}/api/polls/1
+Authorization: Basic demo demo-pass-123
+
+### Ошибка: пустой title (400)
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "", "options": ["a", "b"] }
+
+### Ошибка: сломанный JSON (400)
+POST {{base}}/api/polls
+Content-Type: application/json
+
+{ "title": "Опрос", "options": [
