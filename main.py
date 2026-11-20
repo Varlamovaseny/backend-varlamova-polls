@@ -80,7 +80,7 @@ def log_request(response):
 
 
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
-PUBLIC_ENDPOINTS = {"register", "create_vote"}
+PUBLIC_ENDPOINTS = {"register"}
 PROTECTED_READS = {"me"}
 CHALLENGE = {"WWW-Authenticate": 'Basic realm="polls"'}
 USERNAME_RE = re.compile(r"^[\w.@+-]{3,64}$")
@@ -545,9 +545,9 @@ OPENAPI = {
             "get": {"summary": "Голоса опроса", "parameters": [ID_PARAM] + PAGING,
                     "responses": {"200": {"description": "OK", "content": {"application/json": {
                         "schema": {"type": "array", "items": _ref("Vote")}}}}, **_responses(400, 404)}},
-            "post": {"summary": "Проголосовать", "parameters": [ID_PARAM], "requestBody": _body("VoteIn"),
+            "post": {"summary": "Проголосовать", "security": SECURITY, "parameters": [ID_PARAM], "requestBody": _body("VoteIn"),
                      "responses": {"201": {"description": "Создано", "content": {"application/json": {
-                         "schema": _ref("Vote")}}}, **_responses(400, 404, 409)}},
+                         "schema": _ref("Vote")}}}, **_responses(400, 401, 404, 409)}},
         },
     },
     "components": {"securitySchemes": {"basicAuth": {"type": "http", "scheme": "basic"}}, "schemas": {
