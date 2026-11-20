@@ -4,11 +4,13 @@ import re
 import sqlite3
 import time
 
+import jwt
 from flask import Flask, Response, g, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from db import connect, ensure_schema, transaction
-from security import dummy_verify, hash_password, verify_password
+from security import (check_settings, create_token, decode_token, dummy_verify, hash_password,
+                      token_lifetime, verify_password)
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
@@ -22,6 +24,7 @@ STATUSES = ("open", "closed")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 ensure_schema()
+check_settings()
 
 
 def get_db():
@@ -80,23 +83,57 @@ def log_request(response):
 
 
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
-PUBLIC_ENDPOINTS = {"register"}
+PUBLIC_ENDPOINTS = {"register", "login"}
 PROTECTED_READS = {"me"}
-CHALLENGE = {"WWW-Authenticate": 'Basic realm="polls"'}
+CHALLENGE = {"WWW-Authenticate": 'Basic realm="polls", Bearer realm="polls"'}
 USERNAME_RE = re.compile(r"^[\w.@+-]{3,64}$")
 
 
-def authenticate():
+def check_credentials(username, password):
+    user = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if user is None:
+        dummy_verify(password)
+        return None
+    if not verify_password(password, user["password_hash"]):
+        return None
+    return user
+
+
+def wrong_credentials():
+    return ApiError(error("неверный логин или пароль", code=401, headers=CHALLENGE))
+
+
+def user_from_basic():
     auth = request.authorization
     if auth is None or auth.type != "basic" or not auth.username or auth.password is None:
         raise ApiError(error("нужна авторизация", code=401, headers=CHALLENGE))
-    user = get_db().execute("SELECT * FROM users WHERE username = ?", (auth.username,)).fetchone()
+    user = check_credentials(auth.username, auth.password)
     if user is None:
-        dummy_verify(auth.password)
-    if user is None or not verify_password(auth.password, user["password_hash"]):
-
-        raise ApiError(error("неверный логин или пароль", code=401, headers=CHALLENGE))
+        raise wrong_credentials()
     return user
+
+
+def user_from_token(token):
+    try:
+        user_id = decode_token(token)
+    except jwt.ExpiredSignatureError:
+        raise ApiError(error("токен просрочен", code=401, headers=CHALLENGE))
+    except jwt.PyJWTError:
+        raise ApiError(error("недействительный токен", code=401, headers=CHALLENGE))
+    user = get_db().execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None:
+        raise ApiError(error("недействительный токен", code=401, headers=CHALLENGE))
+    return user
+
+
+def authenticate():
+    scheme, _, value = request.headers.get("Authorization", "").partition(" ")
+    scheme = scheme.lower()
+    if scheme == "bearer":
+        return user_from_token(value.strip())
+    if scheme == "basic":
+        return user_from_basic()
+    raise ApiError(error("нужна авторизация", code=401, headers=CHALLENGE))
 
 
 @app.before_request
@@ -380,6 +417,26 @@ def register():
     return jsonify({"id": cur.lastrowid, "username": clean["username"]}), 201
 
 
+@app.post("/auth/login")
+def login():
+    data, err = read_body()
+    if err:
+        return err
+    for field in ("username", "password"):
+        if data.get(field) is None:
+            return error("обязательное поле", field)
+        if not isinstance(data[field], str):
+            return error("должно быть строкой", field)
+    user = check_credentials(data["username"], data["password"])
+    if user is None:
+        raise wrong_credentials()
+    return jsonify({
+        "access_token": create_token(user["id"]),
+        "token_type": "bearer",
+        "expires_in": token_lifetime(),
+    })
+
+
 @app.get("/auth/me")
 def me():
 
@@ -489,7 +546,7 @@ def _body(schema):
     return {"required": True, "content": {"application/json": {"schema": _ref(schema)}}}
 
 
-SECURITY = [{"basicAuth": []}]
+SECURITY = [{"basicAuth": []}, {"bearerAuth": []}]
 ID_PARAM = {"name": "poll_id", "in": "path", "required": True, "schema": {"type": "integer"}}
 PAGING = [
     {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 10, "minimum": 1, "maximum": 100}},
@@ -498,7 +555,7 @@ PAGING = [
 
 OPENAPI = {
     "openapi": "3.0.3",
-    "info": {"title": "Polls API", "version": "3.0", "description": "Опросы, голоса и пользователи, данные хранятся в SQLite"},
+    "info": {"title": "Polls API", "version": "3.1", "description": "Опросы, голоса и пользователи, данные хранятся в SQLite"},
     "paths": {
         "/health": {"get": {"summary": "Проверка сервиса", "responses": _responses(200)}},
         "/api/polls": {
@@ -536,6 +593,11 @@ OPENAPI = {
                      "responses": {"201": {"description": "Создано", "content": {"application/json": {
                          "schema": _ref("User")}}}, **_responses(400, 409)}},
         },
+        "/auth/login": {
+            "post": {"summary": "Вход: выдаёт JWT-токен", "requestBody": _body("UserIn"),
+                     "responses": {"200": {"description": "OK", "content": {"application/json": {
+                         "schema": _ref("Token")}}}, **_responses(400, 401)}},
+        },
         "/auth/me": {
             "get": {"summary": "Текущий пользователь", "security": SECURITY,
                     "responses": {"200": {"description": "OK", "content": {"application/json": {
@@ -550,7 +612,8 @@ OPENAPI = {
                          "schema": _ref("Vote")}}}, **_responses(400, 401, 404, 409)}},
         },
     },
-    "components": {"securitySchemes": {"basicAuth": {"type": "http", "scheme": "basic"}}, "schemas": {
+    "components": {"securitySchemes": {"basicAuth": {"type": "http", "scheme": "basic"},
+                            "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}}, "schemas": {
         "PollIn": {
             "type": "object", "required": ["title", "options"],
             "properties": {
@@ -589,6 +652,14 @@ OPENAPI = {
             "properties": {
                 "username": {"type": "string", "example": "ivan"},
                 "password": {"type": "string", "format": "password", "example": "secret-pass"},
+            },
+        },
+        "Token": {
+            "type": "object",
+            "properties": {
+                "access_token": {"type": "string"},
+                "token_type": {"type": "string", "example": "bearer"},
+                "expires_in": {"type": "integer", "description": "время жизни токена в секундах"},
             },
         },
         "User": {
