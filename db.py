@@ -31,16 +31,25 @@ def connect():
     return conn
 
 
+REQUIRED_COLUMNS = {
+    "polls": {"id", "title", "description", "options", "status", "owner_id"},
+    "votes": {"id", "poll_id", "option", "email"},
+    "users": {"id", "username", "password_hash", "role"},
+}
+
+
 def ensure_schema():
     conn = connect()
     try:
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'polls'"
-        ).fetchone()
+        missing = False
+        for table, columns in REQUIRED_COLUMNS.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not columns <= existing:
+                missing = True
     finally:
         conn.close()
-    if row is None:
-        raise RuntimeError("В базе нет таблиц. Создай их командой: alembic upgrade head")
+    if missing:
+        raise RuntimeError("Схема базы устарела или не создана. Выполни: alembic upgrade head")
 
 
 @contextmanager

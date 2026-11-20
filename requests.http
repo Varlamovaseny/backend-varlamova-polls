@@ -37,6 +37,24 @@ Authorization: Bearer {{token}}
 GET {{base}}/auth/me
 Authorization: Bearer abc.def.ghi
 
+### Вход администратора
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "admin", "password": "admin-test-pass" }
+
+> {% client.global.set("adminToken", response.body.access_token); %}
+
+### Администратор удаляет чужой опрос (204)
+DELETE {{base}}/api/polls/1
+Authorization: Bearer {{adminToken}}
+
+### Неверный пароль: после 5 неудачных попыток за минуту приходит 429
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "username": "demo", "password": "wrong-pass" }
+
 ### Кто я (нужен вход)
 GET {{base}}/auth/me
 Authorization: Basic anna secret-pass

@@ -1,5 +1,8 @@
+import math
 import os
+import threading
 import time
+from collections import deque
 
 import bcrypt
 import jwt
@@ -65,3 +68,50 @@ def decode_token(token):
         return int(payload["sub"])
     except (TypeError, ValueError):
         raise jwt.InvalidTokenError("sub")
+
+
+MAX_LOGIN_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 60
+
+
+class LoginLimiter:
+    def __init__(self, max_failures, window):
+        self.max_failures = max_failures
+        self.window = window
+        self.failures = {}
+        self.lock = threading.Lock()
+
+    def _prune(self, key):
+        attempts = self.failures.get(key)
+        if attempts is None:
+            return None
+        border = time.monotonic() - self.window
+        while attempts and attempts[0] <= border:
+            attempts.popleft()
+        if not attempts:
+            del self.failures[key]
+            return None
+        return attempts
+
+    def retry_after(self, key):
+        with self.lock:
+            attempts = self._prune(key)
+            if attempts is None or len(attempts) < self.max_failures:
+                return 0
+            return max(1, math.ceil(attempts[0] + self.window - time.monotonic()))
+
+    def register_failure(self, key):
+        with self.lock:
+            if self._prune(key) is None:
+                self.failures[key] = deque()
+            self.failures[key].append(time.monotonic())
+            if len(self.failures) > 5000:
+                for other in list(self.failures):
+                    self._prune(other)
+
+    def reset(self, key):
+        with self.lock:
+            self.failures.pop(key, None)
+
+
+login_limiter = LoginLimiter(MAX_LOGIN_FAILURES, LOGIN_WINDOW_SECONDS)

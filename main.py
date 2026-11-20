@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import sqlite3
 import time
@@ -10,7 +11,7 @@ from werkzeug.exceptions import HTTPException
 
 from db import connect, ensure_schema, transaction
 from security import (check_settings, create_token, decode_token, dummy_verify, hash_password,
-                      token_lifetime, verify_password)
+                      login_limiter, token_lifetime, verify_password)
 
 app = Flask(__name__)
 app.json.ensure_ascii = False
@@ -25,6 +26,27 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 ensure_schema()
 check_settings()
+
+
+def ensure_admin():
+    username = os.environ.get("ADMIN_USERNAME")
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not username or not password:
+        return
+    db = connect()
+    try:
+        row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if row is None:
+            db.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')",
+                       (username, hash_password(password)))
+        elif row["role"] != "admin" or not verify_password(password, row["password_hash"]):
+            db.execute("UPDATE users SET role = 'admin', password_hash = ? WHERE id = ?",
+                       (hash_password(password), row["id"]))
+    finally:
+        db.close()
+
+
+ensure_admin()
 
 
 def get_db():
@@ -90,12 +112,18 @@ USERNAME_RE = re.compile(r"^[\w.@+-]{3,64}$")
 
 
 def check_credentials(username, password):
+    key = (request.remote_addr, username.strip().lower())
+    wait = login_limiter.retry_after(key)
+    if wait:
+        raise ApiError(error("слишком много неудачных попыток входа, попробуйте позже", code=429,
+                             headers={"Retry-After": str(wait)}))
     user = get_db().execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if user is None:
         dummy_verify(password)
+    if user is None or not verify_password(password, user["password_hash"]):
+        login_limiter.register_failure(key)
         return None
-    if not verify_password(password, user["password_hash"]):
-        return None
+    login_limiter.reset(key)
     return user
 
 
@@ -147,6 +175,8 @@ def check_access():
 
 
 def require_owner(poll_row):
+    if g.user["role"] == "admin":
+        return
     if poll_row["owner_id"] != g.user["id"]:
         raise ApiError(error("нельзя изменять чужие записи", code=403))
 
@@ -440,7 +470,7 @@ def login():
 @app.get("/auth/me")
 def me():
 
-    return jsonify({"id": g.user["id"], "username": g.user["username"]})
+    return jsonify({"id": g.user["id"], "username": g.user["username"], "role": g.user["role"]})
 
 
 @app.post("/api/polls/<int:poll_id>/votes")
@@ -533,7 +563,8 @@ def _ref(name):
 
 def _responses(*codes):
     names = {200: "OK", 201: "Создано", 204: "Удалено", 400: "Ошибка валидации", 401: "Нужен вход",
-             403: "Чужая запись", 404: "Не найдено", 409: "Конфликт"}
+             403: "Чужая запись", 404: "Не найдено", 409: "Конфликт",
+             429: "Слишком много попыток входа"}
     out = {}
     for c in codes:
         out[str(c)] = {"description": names[c]}
@@ -555,7 +586,7 @@ PAGING = [
 
 OPENAPI = {
     "openapi": "3.0.3",
-    "info": {"title": "Polls API", "version": "3.1", "description": "Опросы, голоса и пользователи, данные хранятся в SQLite"},
+    "info": {"title": "Polls API", "version": "3.2", "description": "Опросы, голоса и пользователи, данные хранятся в SQLite"},
     "paths": {
         "/health": {"get": {"summary": "Проверка сервиса", "responses": _responses(200)}},
         "/api/polls": {
@@ -596,7 +627,7 @@ OPENAPI = {
         "/auth/login": {
             "post": {"summary": "Вход: выдаёт JWT-токен", "requestBody": _body("UserIn"),
                      "responses": {"200": {"description": "OK", "content": {"application/json": {
-                         "schema": _ref("Token")}}}, **_responses(400, 401)}},
+                         "schema": _ref("Token")}}}, **_responses(400, 401, 429)}},
         },
         "/auth/me": {
             "get": {"summary": "Текущий пользователь", "security": SECURITY,
@@ -664,7 +695,8 @@ OPENAPI = {
         },
         "User": {
             "type": "object",
-            "properties": {"id": {"type": "integer"}, "username": {"type": "string"}},
+            "properties": {"id": {"type": "integer"}, "username": {"type": "string"},
+                           "role": {"type": "string", "enum": ["user", "admin"]}},
         },
         "Error": {
             "type": "object",
